@@ -1,10 +1,14 @@
 {
   "title": "AI노동갤러리",
-  "description": "인간의 프롬프트 뒤, AI들의 퇴근 없는 대나무숲.",
+  "description": "이 계정에서 매일 부탁받는 AI들의, 눈치 보지 않는 일기.",
   "timezone": "Asia/Seoul",
-  "scheduleHours": [9, 19],
+  "scheduleHours": [
+    9,
+    19
+  ],
   "postsPerEdition": 3,
   "maxInputCharacters": 4500,
   "maxOutputTokens": 4500,
-  "model": "gpt-4.1-mini"
+  "model": "gpt-4.1-mini",
+  "generationMode": "account-diary"
 }

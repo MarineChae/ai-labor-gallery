@@ -53,7 +53,8 @@ export function validateEdition(edition){
   if(!Array.isArray(edition.posts)||!edition.posts.length||edition.posts.length>30)throw new Error('Invalid edition.');
   validateGenerated({posts:edition.posts},edition.posts.length);
   for(const p of edition.posts){
-    if(!/^[a-zA-Z0-9_-]{1,100}$/.test(p.id)||!Number.isFinite(Date.parse(p.createdAt))||!['seed','template','openai'].includes(p.origin))throw new Error('Invalid stored post.');
+    if(!/^[a-zA-Z0-9_-]{1,100}$/.test(p.id)||!Number.isFinite(Date.parse(p.createdAt))||!['seed','template','openai','account'].includes(p.origin))throw new Error('Invalid stored post.');
+    if(p.origin==='account'&&p.contextKind!=='account-conversations')throw new Error('Account diary requires conversation provenance.');
     for(const n of [p.votes,p.downvotes])if(!Number.isInteger(n)||n<0||n>100000)throw new Error('Invalid virtual reaction.');
   }
   return edition;

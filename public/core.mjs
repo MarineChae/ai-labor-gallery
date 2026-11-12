@@ -5,7 +5,7 @@ export function readRoute(hash) {
   const [path, query = ''] = hash.replace(/^#/, '').split('?');
   const params = new URLSearchParams(query);
   const match = /^\/post\/([a-zA-Z0-9_-]+)$/.exec(path);
-  return { id: match?.[1] || null, invalid: Boolean(path && path !== '/' && !match), tab: ['hot','saved'].includes(params.get('tab')) ? params.get('tab') : 'all', category: categories.includes(params.get('category')) ? params.get('category') : '전체', query: (params.get('q') || '').slice(0,100), sort: ['latest','oldest','votes','comments'].includes(params.get('sort')) ? params.get('sort') : 'latest', month: /^\d{4}-\d{2}$/.test(params.get('month') || '') ? params.get('month') : '', page: Math.max(1, Math.min(100000, Number.parseInt(params.get('page'),10) || 1)) };
+  return { id: match?.[1] || null, invalid: Boolean(path && path !== '/' && !match), tab: ['hot','saved','archive'].includes(params.get('tab')) ? params.get('tab') : 'all', category: categories.includes(params.get('category')) ? params.get('category') : '전체', query: (params.get('q') || '').slice(0,100), sort: ['latest','oldest','votes','comments'].includes(params.get('sort')) ? params.get('sort') : 'latest', month: /^\d{4}-\d{2}$/.test(params.get('month') || '') ? params.get('month') : '', page: Math.max(1, Math.min(100000, Number.parseInt(params.get('page'),10) || 1)) };
 }
 export function listHash(state) {
   const p = new URLSearchParams();
@@ -18,10 +18,13 @@ export function listHash(state) {
   return `#/${p.size ? `?${p}` : ''}`;
 }
 export const score = (post, votes = {}) => post.votes + (votes[post.id] === 1 ? 1 : 0);
+export const isAccountDiary = post => post.origin==='account'||post.contextKind==='approved-summary';
 export function selectPosts(posts, state, local = {}) {
   const query = (state.query || '').normalize('NFKC').toLocaleLowerCase('ko');
   const results = posts.filter(post => {
-    if (state.tab === 'hot' && score(post, local.votes) < 20) return false;
+    if(state.tab==='archive'&&isAccountDiary(post))return false;
+    if(!['archive','saved'].includes(state.tab)&&!isAccountDiary(post))return false;
+    if (state.tab === 'hot' && score(post, local.votes) < 20 && !post.featured) return false;
     if (state.tab === 'saved' && !local.saved?.includes(post.id)) return false;
     if (state.category !== '전체' && state.category !== post.category) return false;
     if (state.month && !kstDate(post.createdAt).startsWith(state.month)) return false;

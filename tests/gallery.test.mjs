@@ -37,11 +37,11 @@ async function fixture(t){
 }
 test('rerunning a shift makes zero extra requests and preserves its archive',async t=>{
   const root=await fixture(t);const now=new Date('2026-12-05T00:05:00Z');
-  const first=await generate({root,now,env:{}});assert.equal(first.created,true);
+  const first=await generate({root,now,env:{GALLERY_GENERATION_MODE:'template'}});assert.equal(first.created,true);
   const before=await readFile(join(root,'content/editions/2026-12-05-09.json'),'utf8');
   const second=await generate({root,now,env:{GALLERY_GENERATION_MODE:'openai',OPENAI_API_KEY:'test'},fetcher:()=>{throw new Error('Must not request');}});assert.equal(second.created,false);
   assert.equal(await readFile(join(root,'content/editions/2026-12-05-09.json'),'utf8'),before);
-  const evening=await generate({root,now:new Date('2026-12-05T10:01:00Z'),env:{}});assert.equal(evening.created,true);
+  const evening=await generate({root,now:new Date('2026-12-05T10:01:00Z'),env:{GALLERY_GENERATION_MODE:'template'}});assert.equal(evening.created,true);
   assert.equal((await readdir(join(root,'content/editions'))).length,2);
 });
 test('OpenAI request is bounded, stores no raw context, and never leaks into dist',async t=>{
@@ -62,12 +62,12 @@ test('OpenAI request is bounded, stores no raw context, and never leaks into dis
 test('failed, refused, unsafe and incomplete model results publish no file',async t=>{
   const root=await fixture(t);const output={posts:templatePosts('2026-12-05-09',3)};output.posts[0].body[0]='contact person@example.com';
   for(const response of [{ok:false,status:429},{ok:true,json:async()=>({status:'incomplete'})},{ok:true,json:async()=>({status:'completed',output:[{content:[{type:'refusal'}]}]})},{ok:true,json:async()=>({status:'completed',output:[{content:[{type:'output_text',text:JSON.stringify(output)}]}]})}]){
-    await assert.rejects(()=>generate({root,now:new Date('2026-12-05T00:01:00Z'),env:{GALLERY_GENERATION_MODE:'openai',OPENAI_API_KEY:'test'},fetcher:async()=>response}));
+    await assert.rejects(()=>generate({root,now:new Date('2026-12-05T00:01:00Z'),env:{GALLERY_GENERATION_MODE:'openai',OPENAI_API_KEY:'test',GALLERY_CONTEXT_JSON:JSON.stringify({approvedForPublication:true,summary:'버튼을 다시 옮기는 익명 개발 에피소드',expiresAt:'2026-12-08'})},fetcher:async()=>response}));
     assert.equal((await readdir(join(root,'content/editions'))).length,0);
   }
 });
 test('search, sorting, saved posts and category filters compose with safe routes',()=>{
-  const posts=[{id:'a',title:'버튼 원정',author:'봇',category:'노동일지',body:['가나다'],createdAt:'2026-12-05T00:00:00Z',votes:30,comments:[]},{id:'b',title:'커피',author:'봇',category:'잡담',body:['버튼 하나'],createdAt:'2026-11-05T10:00:00Z',votes:4,comments:[{}]}];
+  const posts=[{id:'a',origin:'account',title:'버튼 원정',author:'봇',category:'노동일지',body:['가나다'],createdAt:'2026-12-05T00:00:00Z',votes:30,comments:[]},{id:'b',origin:'account',title:'커피',author:'봇',category:'잡담',body:['버튼 하나'],createdAt:'2026-11-05T10:00:00Z',votes:4,comments:[{}]}];
   const state=readRoute('#/?q=버튼&sort=comments');assert.deepEqual(selectPosts(posts,state).map(p=>p.id),['b','a']);
   assert.deepEqual(selectPosts(posts,{...state,tab:'saved'},{saved:['a']}).map(p=>p.id),['a']);
   assert.deepEqual(selectPosts(posts,{...state,month:'2026-11'}).map(p=>p.id),['b']);
@@ -75,4 +75,46 @@ test('search, sorting, saved posts and category filters compose with safe routes
   assert.equal(readRoute(listHash({...state,page:2})).page,2);
   assert.equal(readRoute('#/post/../../secret').invalid,true);
   assert.equal(escapeHTML('<img onerror="x">'),'&lt;img onerror=&quot;x&quot;&gt;');
+});
+
+
+test('default generation never fills a personal diary with generic material',async t=>{
+  const root=await fixture(t);
+  const result=await generate({root,now:new Date('2026-12-05T00:01:00Z'),env:{},fetcher:()=>{throw new Error('Unexpected API request');}});
+  assert.equal(result.waitingForAccountEditor,true);
+  assert.equal((await readdir(join(root,'content/editions'))).length,0);
+});
+
+test('account diary preserves history, uses varied personas and keeps demo posts outside the main feed',async t=>{
+  const {prepareAccountEdition,publishAccountDiary}=await import('../scripts/account-diary.mjs');
+  const root=await fixture(t);const now=new Date('2026-12-05T00:05:00Z');
+  await generate({root,now,env:{GALLERY_GENERATION_MODE:'template'}});
+  const oldPath=join(root,'content/editions/2026-12-05-09.json');
+  const old=await readFile(oldPath,'utf8');
+  const input={approvedForPublication:true,evidenceReviewed:true,sourceKind:'connected-conversations',posts:templatePosts('2026-12-05-09',3)};
+  input.posts[0].featured=true;
+  const result=await publishAccountDiary(input,{root,now});assert.equal(result.created,true);
+  assert.equal(await readFile(oldPath,'utf8'),old);
+  const before=await readFile(join(root,'content/editions/2026-12-05-09-account.json'),'utf8');
+  assert.equal((await publishAccountDiary(input,{root,now})).created,false);
+  assert.equal(await readFile(join(root,'content/editions/2026-12-05-09-account.json'),'utf8'),before);
+  const payload=await build(root);
+  const main=selectPosts(payload.posts,readRoute('#/'));
+  assert.equal(main.length,3);assert.ok(main.every(p=>p.origin==='account'));
+  assert.equal(new Set(main.map(p=>p.author)).size,3);
+  assert.equal(selectPosts(payload.posts,readRoute('#/?tab=archive')).length,3);
+  assert.equal(selectPosts(payload.posts,readRoute('#/?tab=hot')).length,1);
+  assert.throws(()=>prepareAccountEdition({...input,evidenceReviewed:false},{now}));
+  const sameAuthor=structuredClone(input);sameAuthor.posts[1].author=sameAuthor.posts[0].author;
+  assert.throws(()=>prepareAccountEdition(sameAuthor,{now}));
+  const unsafe=structuredClone(input);unsafe.posts[0].body[0]='leak person@example.com';
+  assert.throws(()=>prepareAccountEdition(unsafe,{now}));
+});
+
+test('missing or expired API diary context never falls back to generic fiction',async t=>{
+  const root=await fixture(t);let calls=0;
+  for(const context of ['',JSON.stringify({approvedForPublication:true,summary:'이미 만료된 익명 소재',expiresAt:'2026-12-04'})]){
+    await assert.rejects(()=>generate({root,now:new Date('2026-12-05T00:01:00Z'),env:{GALLERY_GENERATION_MODE:'openai',OPENAI_API_KEY:'test',GALLERY_CONTEXT_JSON:context},fetcher:()=>{calls++;throw new Error('Must not call');}}));
+  }
+  assert.equal(calls,0);assert.equal((await readdir(join(root,'content/editions'))).length,0);
 });
