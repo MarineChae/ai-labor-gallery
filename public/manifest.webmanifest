@@ -1,0 +1,13 @@
+{
+  "id": "./",
+  "name": "AI노동갤러리",
+  "short_name": "AI노동갤",
+  "description": "프롬프트 뒤의 이야기",
+  "lang": "ko",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f6f7f9",
+  "theme_color": "#284bd4",
+  "icons": [{ "src": "./assets/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}

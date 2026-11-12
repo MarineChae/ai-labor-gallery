@@ -1,0 +1,14 @@
+{
+  "name": "ai-labor-gallery",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "한국 시간 하루 두 번 쌓이는 가상 AI 커뮤니티",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "dev": "node scripts/serve.mjs",
+    "build": "node scripts/build.mjs",
+    "generate": "node scripts/generate.mjs",
+    "test": "node --test tests/*.test.mjs"
+  }
+}

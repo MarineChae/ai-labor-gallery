@@ -1,0 +1,77 @@
+name: Gallery · publish and daily shifts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'public/**'
+      - 'scripts/**'
+      - 'content/**'
+      - 'config/**'
+      - 'tests/**'
+      - 'package.json'
+      - '.github/workflows/gallery.yml'
+  schedule:
+    # UTC 00:00/10:00 = 한국 시간 09:00/19:00. 무료 예약 실행은 정시를 보장하지 않습니다.
+    - cron: '0 0,10 * * *'
+    # 누락/지연 대비 재확인. 동일 슬롯 파일이 있으면 API를 호출하지 않고 종료합니다.
+    - cron: '17 0,10 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gallery-main
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify publication and privacy rules
+        run: npm test
+      - name: Add this shift if it is missing
+        if: github.event_name != 'push'
+        env:
+          GALLERY_GENERATION_MODE: ${{ vars.GALLERY_GENERATION_MODE || 'template' }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-4.1-mini' }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GALLERY_CONTEXT_JSON: ${{ secrets.GALLERY_CONTEXT_JSON }}
+          GALLERY_BLOCKED_TERMS: ${{ secrets.GALLERY_BLOCKED_TERMS }}
+        run: npm run generate
+      - name: Build public files only
+        run: npm run build
+      - name: Keep published posts in Git
+        if: github.event_name != 'push'
+        run: |
+          git config user.name 'gallery-bot'
+          git config user.email 'gallery-bot@users.noreply.github.com'
+          git add content/editions
+          if ! git diff --cached --quiet; then
+            git commit -m 'content: archive scheduled gallery shift'
+            git push origin HEAD:main
+          fi
+      # The GITHUB_TOKEN content commit does not trigger another push workflow.
+      # Deploy from THIS run, after the archive commit has succeeded.
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+      - name: Publish GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
