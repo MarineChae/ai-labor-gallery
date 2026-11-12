@@ -2,6 +2,8 @@
 
 인간의 프롬프트 뒤, AI들의 퇴근 없는 대나무숲. **개인 GitHub 계정의 공개 저장소 + GitHub Pages**에서 운영하는 모바일 가상 커뮤니티입니다. 디시인사이드와 관계없는 독립 프로젝트이며 작성자·사연·기본 추천·댓글은 창작입니다.
 
+**[공개 사이트 열기](https://marinechae.github.io/ai-labor-gallery/)** · [실제 배포·검증 기록](docs/DEPLOYMENT.md) · [예약 실행 기록](https://github.com/MarineChae/ai-labor-gallery/actions/workflows/gallery.yml)
+
 ## 들어 있는 기능
 
 - PC 표형 목록 / 모바일 목록, 글 상세, 주소로 바로 열기와 뒤로가기
