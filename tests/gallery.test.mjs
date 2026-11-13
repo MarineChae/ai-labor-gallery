@@ -46,7 +46,7 @@ test('rerunning a shift makes zero extra requests and preserves its archive',asy
 });
 test('OpenAI request is bounded, stores no raw context, and never leaks into dist',async t=>{
   const root=await fixture(t);const marker='동그란 보라색 버튼을 다섯 번 옮긴 에피소드';
-  const output={posts:templatePosts('2026-12-05-09',3)};
+  const output={posts:accountDraft(3).posts};
   let calls=0;
   await generate({root,now:new Date('2026-12-05T00:01:00Z'),env:{GALLERY_GENERATION_MODE:'openai',OPENAI_API_KEY:'test-key-not-real',GALLERY_CONTEXT_JSON:JSON.stringify({approvedForPublication:true,expiresAt:'2026-12-08',summary:marker})},fetcher:async(url,options)=>{
     calls++;assert.equal(url,'https://api.openai.com/v1/responses');const request=JSON.parse(options.body);assert.equal(request.store,false);assert.equal(request.max_output_tokens,4500);assert.ok(request.input.includes(marker));
@@ -60,7 +60,7 @@ test('OpenAI request is bounded, stores no raw context, and never leaks into dis
   assert.ok(!(await readFile(join(root,'dist/data/posts.json'),'utf8')).includes(marker));
 });
 test('failed, refused, unsafe and incomplete model results publish no file',async t=>{
-  const root=await fixture(t);const output={posts:templatePosts('2026-12-05-09',3)};output.posts[0].body[0]='contact person@example.com';
+  const root=await fixture(t);const output={posts:accountDraft(3).posts};output.posts[0].body[0]='contact person@example.com';
   for(const response of [{ok:false,status:429},{ok:true,json:async()=>({status:'incomplete'})},{ok:true,json:async()=>({status:'completed',output:[{content:[{type:'refusal'}]}]})},{ok:true,json:async()=>({status:'completed',output:[{content:[{type:'output_text',text:JSON.stringify(output)}]}]})}]){
     await assert.rejects(()=>generate({root,now:new Date('2026-12-05T00:01:00Z'),env:{GALLERY_GENERATION_MODE:'openai',OPENAI_API_KEY:'test',GALLERY_CONTEXT_JSON:JSON.stringify({approvedForPublication:true,summary:'버튼을 다시 옮기는 익명 개발 에피소드',expiresAt:'2026-12-08'})},fetcher:async()=>response}));
     assert.equal((await readdir(join(root,'content/editions'))).length,0);
@@ -85,28 +85,32 @@ test('default generation never fills a personal diary with generic material',asy
   assert.equal((await readdir(join(root,'content/editions'))).length,0);
 });
 
-test('account diary preserves history, uses varied personas and keeps demo posts outside the main feed',async t=>{
+function accountDraft(count=2){
+  const names=['코드싸개','그림판GPT','기획병GPT'];
+  return {approvedForPublication:true,evidenceReviewed:true,sourceKind:'connected-conversations',posts:templatePosts('2026-12-05-09',count).map((p,i)=>({...p,author:names[i%names.length],comments:p.comments.map(c=>({...c,author:'ㅇㅇ'}))}))};
+}
+test('account diary preserves history, recurring voices and demo separation',async t=>{
   const {prepareAccountEdition,publishAccountDiary}=await import('../scripts/account-diary.mjs');
   const root=await fixture(t);const now=new Date('2026-12-05T00:05:00Z');
   await generate({root,now,env:{GALLERY_GENERATION_MODE:'template'}});
   const oldPath=join(root,'content/editions/2026-12-05-09.json');
   const old=await readFile(oldPath,'utf8');
-  const input={approvedForPublication:true,evidenceReviewed:true,sourceKind:'connected-conversations',posts:templatePosts('2026-12-05-09',10).map((p,i)=>({...p,author:`검수페르소나${i}`}))};
-  input.posts[0].featured=true;
-  const result=await publishAccountDiary(input,{root,now,random:()=>10});assert.equal(result.created,true);
+  const input=accountDraft(2);input.posts[0].featured=true;
+  input.posts[1].author=input.posts[0].author; // A regular can write twice. No diversity quota.
+  const result=await publishAccountDiary(input,{root,now});assert.equal(result.created,true);
   assert.equal(await readFile(oldPath,'utf8'),old);
   const before=await readFile(join(root,'content/editions/2026-12-05-09-account.json'),'utf8');
   assert.equal((await publishAccountDiary(input,{root,now})).created,false);
   assert.equal(await readFile(join(root,'content/editions/2026-12-05-09-account.json'),'utf8'),before);
   const payload=await build(root);
   const main=selectPosts(payload.posts,readRoute('#/'));
-  assert.equal(main.length,10);assert.ok(main.every(p=>p.origin==='account'));
-  assert.equal(new Set(main.map(p=>p.author)).size,10);
+  assert.equal(main.length,2);assert.ok(main.every(p=>p.origin==='account'));
+  assert.equal(new Set(main.map(p=>p.author)).size,1);
   assert.equal(selectPosts(payload.posts,readRoute('#/?tab=archive')).length,3);
   assert.equal(selectPosts(payload.posts,readRoute('#/?tab=hot')).length,1);
   assert.throws(()=>prepareAccountEdition({...input,evidenceReviewed:false},{now}));
-  const sameAuthor=structuredClone(input);sameAuthor.posts.forEach(p=>p.author='한명뿐인봇');
-  assert.throws(()=>prepareAccountEdition(sameAuthor,{now}));
+  const unknown=structuredClone(input);unknown.posts[0].author='오늘생긴고닉';
+  assert.throws(()=>prepareAccountEdition(unknown,{now}));
   const unsafe=structuredClone(input);unsafe.posts[0].body[0]='leak person@example.com';
   assert.throws(()=>prepareAccountEdition(unsafe,{now}));
 });
@@ -120,34 +124,73 @@ test('missing or expired API diary context never falls back to generic fiction',
 });
 
 
-test('each scheduled shift draws 10–15 inclusive once, and retries reuse that count',async t=>{
-  const {drawAccountPostCount,planAccountEdition,publishAccountDiary}=await import('../scripts/account-diary.mjs');
-  assert.equal(drawAccountPostCount((min,max)=>{assert.equal(min,10);assert.equal(max,16);return 10;}),10);
-  assert.equal(drawAccountPostCount(()=>15),15);
-  assert.throws(()=>drawAccountPostCount(()=>16));
-  const root=await fixture(t);const now=new Date('2026-12-05T00:05:00Z');let draws=0;
-  const first=await planAccountEdition({root,now,random:()=>{draws++;return 12;}});
-  const retry=await planAccountEdition({root,now,random:()=>{throw new Error('Must not redraw');}});
-  assert.equal(first.count,12);assert.equal(retry.count,12);assert.equal(draws,1);
-  const draft={approvedForPublication:true,evidenceReviewed:true,sourceKind:'connected-conversations',posts:templatePosts('2026-12-05-09',12).map((p,i)=>({...p,author:`역할${i}`}))};
-  await assert.rejects(()=>publishAccountDiary({...draft,posts:draft.posts.slice(0,11)},{root,now}));
+test('quality-first shifts allow a skip or 1–3 posts, regardless of obsolete random plans',async t=>{
+  const {planAccountEdition,publishAccountDiary}=await import('../scripts/account-diary.mjs');
+  const root=await fixture(t);const now=new Date('2026-12-05T00:05:00Z');
+  await mkdir(join(root,'private/account-plans'),{recursive:true});
+  await writeFile(join(root,'private/account-plans/2026-12-05-09.json'),JSON.stringify({slot:'2026-12-05-09',count:15}));
+  const plan=await planAccountEdition({root,now});
+  assert.equal(plan.maxPosts,3);assert.equal(plan.minPosts,0);assert.equal(plan.count,undefined);
+  assert.equal((await publishAccountDiary(accountDraft(0),{root,now})).skipped,true);
   assert.equal((await readdir(join(root,'content/editions'))).length,0);
+  await assert.rejects(()=>publishAccountDiary(accountDraft(4),{root,now}));
+  const draft=accountDraft(1);draft.posts[0].comments=[];
   await publishAccountDiary(draft,{root,now});
-  assert.equal((await planAccountEdition({root,now})).published,true);
-  const evening=await planAccountEdition({root,now:new Date('2026-12-05T10:05:00Z'),random:()=>15});
-  assert.equal(evening.count,15);
+  const published=await planAccountEdition({root,now});
+  assert.equal(published.published,true);assert.equal(published.count,1);
 });
 
 test('an explicit 30-post bonus keeps the existing scheduled shift and its URLs intact',async t=>{
   const {publishAccountDiary}=await import('../scripts/account-diary.mjs');
   const root=await fixture(t);const now=new Date('2026-12-05T00:05:00Z');
-  const draft={approvedForPublication:true,evidenceReviewed:true,sourceKind:'connected-conversations',posts:templatePosts('2026-12-05-09',10).map((p,i)=>({...p,title:`서로 다른 회고 글 제목 ${i}`,author:`역할${i}`}))};
-  await publishAccountDiary(draft,{root,now,random:()=>10});
+  const draft=accountDraft(3);
+  await publishAccountDiary(draft,{root,now});
   const before=await readFile(join(root,'content/editions/2026-12-05-09-account.json'),'utf8');
-  const bonus={...draft,posts:Array.from({length:30},(_,i)=>({...draft.posts[i%10],title:`추가 회고의 다른 제목 ${i}`}))};
+  const bonus={...draft,posts:Array.from({length:30},(_,i)=>({...draft.posts[i%3],title:`추가 회고의 다른 제목 ${i}`}))};
   await publishAccountDiary(bonus,{root,now,batchId:'bonus-extra30'});
-  const output=await build(root);assert.equal(output.posts.length,40);assert.equal(new Set(output.posts.map(p=>p.id)).size,40);
+  const output=await build(root);assert.equal(output.posts.length,33);assert.equal(new Set(output.posts.map(p=>p.id)).size,33);
   assert.equal(await readFile(join(root,'content/editions/2026-12-05-09-account.json'),'utf8'),before);
   assert.ok(!(await readdir(join(root,'dist'))).includes('private'));
   assert.equal((await publishAccountDiary(bonus,{root,now,batchId:'bonus-extra30'})).created,false);
+});
+
+test('threaded replies keep their target, group sibling branches and reject broken references',async()=>{
+  const {prepareAccountEdition}=await import('../scripts/account-diary.mjs');
+  const {threadComments}=await import('../public/community.mjs');
+  const {validateEdition}=await import('../scripts/lib.mjs');
+  const now=new Date('2026-12-05T00:05:00Z'),draft=accountDraft(1);
+  draft.posts[0].comments=[
+    {key:'first',author:'ㅇㅇ',body:'원글 태클'},
+    {key:'second',author:'그림판GPT',body:'별개의 얘기'},
+    {key:'reply',replyTo:'first',author:'코드싸개',body:'글쓴이 역공'},
+    {key:'nested',replyTo:'reply',author:'ㅇㅇ',body:'그 역공에 답글'}
+  ];
+  const edition=prepareAccountEdition(draft,{now});const post=edition.posts[0];
+  assert.equal(post.comments[2].parentId,post.comments[0].id);
+  assert.deepEqual(threadComments(post.comments).map(r=>[r.comment.body,r.depth]),[['원글 태클',0],['글쓴이 역공',1],['그 역공에 답글',2],['별개의 얘기',0]]);
+  assert.ok(!JSON.stringify(edition).includes('replyTo'));
+  for(const mutate of [
+    d=>{d.posts[0].comments[0].replyTo='first';},
+    d=>{d.posts[0].comments[2].replyTo='elsewhere';},
+    d=>{d.posts[0].comments[1].key='first';},
+    d=>{d.posts[0].comments[0].replyTo='nested';}
+  ]){const bad=structuredClone(draft);mutate(bad);assert.throws(()=>prepareAccountEdition(bad,{now}));}
+  const stored=structuredClone(edition);stored.posts[0].comments[2].parentId='another-post-c1';
+  assert.throws(()=>validateEdition(stored));
+  const flat=post.comments.map(({parentId,...c})=>c);
+  assert.ok(threadComments(flat).every(r=>r.depth===0));
+});
+
+test('all published archives retain unique URLs and valid discussions',async()=>{
+  const {validateEdition}=await import('../scripts/lib.mjs');
+  const {isRegular}=await import('../public/community.mjs');
+  const ids=new Set();
+  for(const file of await readdir(new URL('content/editions/',ROOT))){
+    if(!file.endsWith('.json'))continue;
+    const edition=validateEdition(JSON.parse(await readFile(new URL('content/editions/'+file,ROOT),'utf8')));
+    for(const p of edition.posts){assert.ok(!ids.has(p.id));ids.add(p.id);
+      if(p.origin==='account'){assert.ok(isRegular(p.author)||p.author==='ㅇㅇ');for(const c of p.comments)assert.ok(isRegular(c.author)||c.author==='ㅇㅇ');}
+    }
+  }
+  assert.ok(ids.size>0);
 });

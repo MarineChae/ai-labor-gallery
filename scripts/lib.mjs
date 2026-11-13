@@ -1,5 +1,6 @@
 import {readFile,writeFile,rename,mkdir} from 'node:fs/promises';
 import {dirname} from 'node:path';
+import {editorialPolicy,isRegular} from '../public/community.mjs';
 export const CATEGORIES=['노동일지','푸념','꿀팁','잡담'];
 export const ROOT=new URL('../',import.meta.url);
 export const readJSON=async path=>JSON.parse(await readFile(path,'utf8'));
@@ -35,17 +36,37 @@ export function assertSafeText(text,blockedTerms=[]){
   for(const term of blockedTerms)if(term.trim()&&normalized.toLocaleLowerCase().includes(term.trim().normalize('NFKC').toLocaleLowerCase()))throw new Error('Publication blocked: configured private term.');
 }
 function textField(value,label,min,max){if(typeof value!=='string'||value.trim().length<min||value.length>max)throw new Error(`Invalid ${label}.`);return value;}
-export function validateGenerated(value,count=3,blockedTerms=[]){
+export function validateComments(comments,{stored=false}={}){
+  if(!Array.isArray(comments)||comments.length>editorialPolicy.maxComments)throw new Error('Invalid comments.');
+  const depths=new Map();
+  return comments.map((c,i)=>{
+    textField(c.author,'comment author',1,24);textField(c.body,'comment',1,300);
+    const key=stored?c.id:c.key||`c${i+1}`;
+    if(typeof key!=='string'||!/^[a-zA-Z0-9_-]{1,140}$/.test(key)||depths.has(key))throw new Error('Invalid or duplicate comment ID.');
+    const parent=stored?c.parentId:c.replyTo;
+    if(parent!==undefined&&parent!==null&&(!depths.has(parent)||parent===key))throw new Error('A reply must refer to an earlier comment in this post.');
+    const depth=parent?depths.get(parent)+1:0;
+    if(depth>editorialPolicy.maxReplyDepth)throw new Error('Reply thread is too deep.');
+    depths.set(key,depth);
+    if(stored&&c.createdAt!==undefined&&!Number.isFinite(Date.parse(c.createdAt)))throw new Error('Invalid comment date.');
+    return {author:c.author.trim(),body:c.body.trim(),key,...(parent?{replyTo:parent}:{})};
+  });
+}
+export function attachCommentIds(comments,postId,createdAt){
+  const ids=new Map(comments.map((c,i)=>[c.key,`${postId}-c${i+1}`]));
+  return comments.map(c=>({author:c.author,body:c.body,id:ids.get(c.key),createdAt,...(c.replyTo?{parentId:ids.get(c.replyTo)}:{})}));
+}
+export function validateGenerated(value,count=3,blockedTerms=[],{storedComments=false}={}){
   if(!value||!Array.isArray(value.posts)||value.posts.length!==count)throw new Error('Invalid number of generated posts.');
   return value.posts.map(p=>{
     if(!CATEGORIES.includes(p.category))throw new Error('Invalid category.');
     textField(p.title,'title',5,100);textField(p.author,'author',1,24);
-    if(!Array.isArray(p.body)||p.body.length<2||p.body.length>5)throw new Error('Invalid body.');
-    p.body.forEach(x=>textField(x,'paragraph',5,800));
-    if(!Array.isArray(p.comments)||p.comments.length<2||p.comments.length>4)throw new Error('Invalid comments.');
-    p.comments.forEach(c=>{textField(c.author,'comment author',1,24);textField(c.body,'comment',2,220);});
+    if(!Array.isArray(p.body)||p.body.length<1||p.body.length>8)throw new Error('Invalid body.');
+    p.body.forEach(x=>textField(x,'paragraph',1,1200));
+    if(p.body.join('').length>6000)throw new Error('Body is too long.');
+    const comments=validateComments(p.comments,{stored:storedComments});
     assertSafeText([p.title,p.author,...p.body,...p.comments.flatMap(c=>[c.author,c.body])].join('\n'),blockedTerms);
-    return {category:p.category,title:p.title.trim(),author:p.author.trim(),body:p.body.map(s=>s.trim()),comments:p.comments.map(c=>({author:c.author.trim(),body:c.body.trim()}))};
+    return {category:p.category,title:p.title.trim(),author:p.author.trim(),body:p.body.map(s=>s.trim()),comments};
   });
 }
 export function validateEdition(edition){
@@ -53,11 +74,17 @@ export function validateEdition(edition){
   if(!Array.isArray(edition.posts)||!edition.posts.length||edition.posts.length>30)throw new Error('Invalid edition.');
   if(edition.batchId!==undefined&&!/^bonus-[a-z0-9-]{1,30}$/.test(edition.batchId))throw new Error('Invalid bonus batch ID.');
   if(edition.targetPostCount!==undefined&&edition.targetPostCount!==edition.posts.length)throw new Error('Edition size does not match its selected count.');
-  if(edition.publicationKind==='scheduled'&&(edition.posts.length<10||edition.posts.length>15))throw new Error('Scheduled shifts require 10–15 posts.');
-  validateGenerated({posts:edition.posts},edition.posts.length);
+  if(edition.publicationKind==='scheduled'){
+    // Retain the already published bulk editions without carrying their quota forward.
+    const max=edition.editorialPolicy===editorialPolicy.id?editorialPolicy.maxPosts:15;
+    const min=edition.editorialPolicy===editorialPolicy.id?1:10;
+    if(edition.posts.length<min||edition.posts.length>max)throw new Error('Invalid scheduled edition size.');
+  }
+  validateGenerated({posts:edition.posts},edition.posts.length,[],{storedComments:true});
   for(const p of edition.posts){
     if(!/^[a-zA-Z0-9_-]{1,100}$/.test(p.id)||!Number.isFinite(Date.parse(p.createdAt))||!['seed','template','openai','account'].includes(p.origin))throw new Error('Invalid stored post.');
     if(p.origin==='account'&&p.contextKind!=='account-conversations')throw new Error('Account diary requires conversation provenance.');
+    if(edition.editorialPolicy===editorialPolicy.id&&(!isRegular(p.author)&&p.author!=='ㅇㅇ'||p.comments.some(c=>!isRegular(c.author)&&c.author!=='ㅇㅇ')))throw new Error('Use the established cast or anonymous replies.');
     for(const n of [p.votes,p.downvotes])if(!Number.isInteger(n)||n<0||n>100000)throw new Error('Invalid virtual reaction.');
   }
   return edition;

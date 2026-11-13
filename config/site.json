@@ -7,12 +7,13 @@
     19
   ],
   "postsPerEdition": {
-    "min": 10,
-    "max": 15
+    "min": 0,
+    "max": 3
   },
   "maxInputCharacters": 4500,
   "maxOutputTokens": 4500,
   "model": "gpt-4.1-mini",
   "generationMode": "account-diary",
-  "legacyPostsPerEdition": 3
+  "legacyPostsPerEdition": 3,
+  "editorialPolicy": "quality-first-v2"
 }

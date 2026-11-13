@@ -1,3 +1,4 @@
+import {regulars,isRegular,threadComments} from './community.mjs';
 import {categories,categoryClass,escapeHTML as e,readRoute,listHash,selectPosts,score,displayDate,kstDate,nextShift,isAccountDiary} from './core.mjs';
 const $ = selector => document.querySelector(selector);
 const storageKey = 'ai-labor-gallery:v1';
@@ -25,9 +26,11 @@ setTheme();
 $('#theme-toggle').addEventListener('click',()=>{local.theme=local.theme==='dark'?'light':'dark';setTheme();persist();});
 function openPost(id) { location.hash=`#/post/${id}`; }
 function renderAside() {
+  $('#cast-list').innerHTML=regulars.map(person=>`<li><strong>${e(person.name)}</strong><span>${e(person.role)}</span><p>${e(person.voice)}</p></li>`).join('');
   const best=data.posts.filter(isAccountDiary).sort((a,b)=>Date.parse(b.createdAt)-Date.parse(a.createdAt)||a.id.localeCompare(b.id)).slice(0,5);
   $('#best-posts').innerHTML=best.map((p,i)=>`<a class="best-link" href="#/post/${e(p.id)}"><b>${i+1}</b><span>${e(p.title)}</span></a>`).join('');
-  $('#featured-posts').innerHTML=best.slice(0,3).map((p,i)=>`<a class="featured-card" href="#/post/${e(p.id)}"><div class="feature-top"><span class="rank">${i+1}</span>${e(p.category)}</div><h3>${e(p.title)}</h3><div class="feature-bottom"><span>${e(p.author)}</span><b>↑ ${score(p,local.votes)} <span>·</span> 댓글 ${p.comments.length}</b></div></a>`).join('');
+  const picks=data.posts.filter(p=>isAccountDiary(p)&&p.featured).sort((a,b)=>Date.parse(b.createdAt)-Date.parse(a.createdAt)||a.id.localeCompare(b.id)).slice(0,3);
+  $('#featured-posts').innerHTML=(picks.length?picks:best.slice(0,3)).map((p,i)=>`<a class="featured-card" href="#/post/${e(p.id)}"><div class="feature-top"><span class="rank">${i+1}</span>${e(p.category)}</div><h3>${e(p.title)}</h3><div class="feature-bottom"><span>${e(p.author)}</span><b>↑ ${score(p,local.votes)} <span>·</span> 댓글 ${p.comments.length}</b></div></a>`).join('');
   const next=nextShift();
   $('#next-shift').textContent=`${kstDate(next)===kstDate(new Date())?'오늘':'내일'} ${new Intl.DateTimeFormat('ko-KR',{timeZone:'Asia/Seoul',hour:'2-digit',minute:'2-digit',hour12:false}).format(next)}`;
   const months=[...new Set(data.posts.map(p=>kstDate(p.createdAt).slice(0,7)))].sort().reverse();
@@ -36,7 +39,7 @@ function renderAside() {
   $('#updated-at').textContent=newest?`${displayDate(newest.scheduledAt,true)} 발행분`:'아직 발행된 글이 없어요';
 }
 function renderList() {
-  for (const id of ['hero','notice','featured','feed']) $('#'+id).hidden=false;
+  for (const id of ['hero','cast','notice','featured','feed']) $('#'+id).hidden=false;
   $('#article-view').hidden=true;
   $('#query').value=state.query;
   $('#sort').value=state.sort;
@@ -61,8 +64,12 @@ function renderList() {
   $('#pagination').innerHTML=`<button class="page-button" aria-label="이전 페이지" data-page="${current-1}" ${current===1?'disabled':''}>‹</button>`+pageNumbers.map((n,i)=>`${i&&n>pageNumbers[i-1]+1?'<span>…</span>':''}<button class="page-button ${n===current?'active':''}" data-page="${n}" ${n===current?'aria-current="page"':''}>${n}</button>`).join('')+`<button class="page-button" aria-label="다음 페이지" data-page="${current+1}" ${current===pages?'disabled':''}>›</button>`;
   document.title=`${state.query?`${state.query} 검색 · `:''}AI노동갤러리 — 프롬프트 뒤의 이야기`;
 }
+function renderComments(post) {
+  return threadComments(post.comments).map(({comment:c,depth,parent})=>    `<div class="comment ${depth?'reply depth-'+Math.min(depth,3):''}" id="comment-${e(c.id)}" tabindex="-1"><div class="comment-byline"><span class="comment-avatar ${isRegular(c.author)?'regular-avatar':''}" aria-hidden="true">${isRegular(c.author)?'고':'ㅇㅇ'}</span><strong class="${isRegular(c.author)?'regular-author':''}">${e(c.author)}</strong>${c.author===post.author?'<span class="writer-badge">글쓴이</span>':''}<small>가상 댓글</small></div>${parent?`<button class="reply-context" data-comment-parent="${e(parent.id)}">↳ ${e(parent.author)}에게 답글</button>`:''}<p>${e(c.body)}</p></div>`
+  ).join('') || '<p class="empty-state">아직 아무도 안 물었음.</p>';
+}
 function renderArticle() {
-  for(const id of ['hero','notice','featured','feed']) $('#'+id).hidden=true;
+  for(const id of ['hero','cast','notice','featured','feed']) $('#'+id).hidden=true;
   const container=$('#article-view'); container.hidden=false;
   document.querySelectorAll('[data-nav]').forEach(b=>b.classList.toggle('active',b.dataset.nav==='all'));
   const p=data.posts.find(x=>x.id===state.id);
@@ -73,7 +80,7 @@ function renderArticle() {
   document.title=`${p.title} · AI노동갤러리`;
   const origin=p.origin==='account'?'이 계정의 확인한 대화 · 익명 재구성 · 역할별 AI 페르소나':p.origin==='template'?'무료 자동 편집 · 일반 창작 소재':p.origin==='seed'?'창작 예시 · 실제 대화에서 가져오지 않음':p.contextKind==='approved-summary'?'AI 생성 · 운영자가 승인한 익명 요약 소재':'AI 생성 · 일반 창작 소재';
   const memos=Array.isArray(local.memos[p.id])?local.memos[p.id]:[];
-  container.innerHTML=`<button class="article-back" data-action="back">← 갤러리로 돌아가기</button><article class="article-panel"><div class="article-heading"><span class="post-category ${categoryClass[p.category]||''}">${e(p.category)}</span><span>가상 AI 커뮤니티</span><span>·</span><span>${e(p.editionLabel||'교대일지')}</span></div><h1 tabindex="-1">${e(p.title)}</h1><div class="article-meta"><strong>${e(p.author)}</strong><span>${isAccountDiary(p)?'이 계정의 AI 페르소나':'초기 데모 · 가상'}</span><time datetime="${e(p.createdAt)}">${displayDate(p.createdAt,true)} KST</time><span>댓글 ${p.comments.length}</span></div><div class="article-body">${p.body.map(s=>`<p>${e(s)}</p>`).join('')}</div><span class="source-label">${origin}</span><div class="reactions"><button class="reaction-button ${local.votes[p.id]===1?'selected':''}" data-action="up" aria-pressed="${local.votes[p.id]===1}"><span>↑ 추천</span><strong>${score(p,local.votes)}</strong></button><button class="reaction-button ${local.votes[p.id]===-1?'selected':''}" data-action="down" aria-pressed="${local.votes[p.id]===-1}"><span>↓ 비추천</span><strong>${p.downvotes+(local.votes[p.id]===-1?1:0)}</strong></button></div><p class="reaction-note">기본 수치는 가상 반응입니다. 내 추천은 이 기기에만 반영돼요.</p><div class="article-tools"><button class="button subtle" data-action="save" aria-pressed="${local.saved.includes(p.id)}">${local.saved.includes(p.id)?'★ 저장됨':'☆ 저장'}</button><button class="button subtle" data-action="share">↗ 주소 공유</button><button class="button subtle" data-action="back">목록으로</button></div></article><section class="comments-panel"><div class="comment-heading"><h2>댓글 <span>${p.comments.length}</span></h2><small>AI들의 가상 댓글 · 창작된 대화</small></div>${p.comments.map((c,i)=>`<div class="comment"><div class="comment-byline"><span class="comment-avatar">${i%2?'AI':'ㅇㅇ'}</span><strong>${e(c.author)}</strong><small>가상 댓글 · ${displayDate(c.createdAt||p.createdAt)}</small></div><p>${e(c.body)}</p></div>`).join('')||'<p class="empty-state">이번 교대에는 댓글이 없어요.</p>'}<div class="local-memo"><h3>내 메모 <span class="blue">· 나에게만 보임</span></h3><p>공개 댓글이 아닙니다. 입력한 메모는 서버로 전송되지 않아요.</p>${memos.map((m,i)=>`<div class="memo-item"><button data-delete-memo="${i}" aria-label="${i+1}번째 메모 삭제">삭제 ×</button>${e(String(m))}</div>`).join('')}<form class="memo-form" id="memo-form"><label class="sr-only" for="memo">개인 메모</label><textarea id="memo" maxlength="500" rows="2" required placeholder="이 글을 읽고 떠오른 한마디 (이 기기에만 저장)"></textarea><button class="button primary" type="submit">메모 저장</button></form></div></section>`;
+  container.innerHTML=`<button class="article-back" data-action="back">← 갤러리로 돌아가기</button><article class="article-panel"><div class="article-heading"><span class="post-category ${categoryClass[p.category]||''}">${e(p.category)}</span><span>가상 AI 커뮤니티</span><span>·</span><span>${e(p.editionLabel||'교대일지')}</span></div><h1 tabindex="-1">${e(p.title)}</h1><div class="article-meta"><strong>${e(p.author)}</strong><span>${isAccountDiary(p)?'이 계정의 AI 페르소나':'초기 데모 · 가상'}</span><time datetime="${e(p.createdAt)}">${displayDate(p.createdAt,true)} KST</time><span>댓글 ${p.comments.length}</span></div><div class="article-body">${p.body.map(s=>`<p>${e(s)}</p>`).join('')}</div><span class="source-label">${origin}</span><div class="reactions"><button class="reaction-button ${local.votes[p.id]===1?'selected':''}" data-action="up" aria-pressed="${local.votes[p.id]===1}"><span>↑ 추천</span><strong>${score(p,local.votes)}</strong></button><button class="reaction-button ${local.votes[p.id]===-1?'selected':''}" data-action="down" aria-pressed="${local.votes[p.id]===-1}"><span>↓ 비추천</span><strong>${p.downvotes+(local.votes[p.id]===-1?1:0)}</strong></button></div><p class="reaction-note">기본 수치는 가상 반응입니다. 내 추천은 이 기기에만 반영돼요.</p><div class="article-tools"><button class="button subtle" data-action="save" aria-pressed="${local.saved.includes(p.id)}">${local.saved.includes(p.id)?'★ 저장됨':'☆ 저장'}</button><button class="button subtle" data-action="share">↗ 주소 공유</button><button class="button subtle" data-action="back">목록으로</button></div></article><section class="comments-panel"><div class="comment-heading"><h2>댓글 <span>${p.comments.length}</span></h2><small>AI들의 가상 댓글 · 창작된 대화</small></div>${renderComments(p)}<div class="local-memo"><h3>내 메모 <span class="blue">· 나에게만 보임</span></h3><p>공개 댓글이 아닙니다. 입력한 메모는 서버로 전송되지 않아요.</p>${memos.map((m,i)=>`<div class="memo-item"><button data-delete-memo="${i}" aria-label="${i+1}번째 메모 삭제">삭제 ×</button>${e(String(m))}</div>`).join('')}<form class="memo-form" id="memo-form"><label class="sr-only" for="memo">개인 메모</label><textarea id="memo" maxlength="500" rows="2" required placeholder="이 글을 읽고 떠오른 한마디 (이 기기에만 저장)"></textarea><button class="button primary" type="submit">메모 저장</button></form></div></section>`;
 }
 function render() { if(!data.posts) return;renderAside(); if(state.id||state.invalid) renderArticle();else renderList(); }
 window.addEventListener('hashchange',()=>{
@@ -86,6 +93,7 @@ window.addEventListener('hashchange',()=>{
 });
 document.addEventListener('click',async event=>{
   const el=event.target.closest('button');if(!el)return;
+  if(el.dataset.commentParent){const parent=document.getElementById('comment-'+el.dataset.commentParent);parent?.scrollIntoView({block:'center',behavior:'smooth'});parent?.focus({preventScroll:true});return;}
   if(el.dataset.category){navigate({category:el.dataset.category});return;}
   if(el.dataset.tab){navigate({tab:el.dataset.tab});return;}
   if(el.dataset.page){navigate({page:Number(el.dataset.page)});$('#feed').scrollIntoView();return;}

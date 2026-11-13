@@ -2,6 +2,7 @@ import {readdir,rm,mkdir,cp,writeFile,readFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 import {join,resolve} from 'node:path';
 import {ROOT,readJSON,validateEdition} from './lib.mjs';
+import {regulars,editorialPolicy} from '../public/community.mjs';
 // Deliberate allowlist: never copy the repository, config, secrets, or raw input into the website.
 export async function build(root=fileURLToPath(ROOT)){
   const editions=[];const ids=new Set();
@@ -14,8 +15,8 @@ export async function build(root=fileURLToPath(ROOT)){
   }
   const posts=editions.flatMap(ed=>ed.posts).sort((a,b)=>Date.parse(b.createdAt)-Date.parse(a.createdAt)||a.id.localeCompare(b.id));
   const dist=join(root,'dist');await rm(dist,{recursive:true,force:true});await mkdir(join(dist,'data'),{recursive:true});
-  for(const name of ['index.html','style.css','tokens.css','app.js','core.mjs','manifest.webmanifest','assets','_headers'])await cp(join(root,'public',name),join(dist,name),{recursive:true});
-  const payload={schemaVersion:1,editions:editions.map(({slot,scheduledAt,mode})=>({slot,scheduledAt,mode})),posts};
+  for(const name of ['index.html','style.css','tokens.css','app.js','core.mjs','community.mjs','manifest.webmanifest','assets','_headers'])await cp(join(root,'public',name),join(dist,name),{recursive:true});
+  const payload={schemaVersion:1,editorialPolicy,regulars,editions:editions.map(({slot,scheduledAt,mode})=>({slot,scheduledAt,mode})),posts};
   await writeFile(join(dist,'data/posts.json'),JSON.stringify(payload)+'\n');await writeFile(join(dist,'.nojekyll'),'');
   const total=(await readFile(join(dist,'data/posts.json'))).length;
   console.log(`Built dist/: ${posts.length} posts, ${editions.length} editions, ${Math.round(total/1024)} KB archive.`);
