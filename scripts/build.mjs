@@ -7,7 +7,7 @@ export async function build(root=fileURLToPath(ROOT)){
   const editions=[];const ids=new Set();
   for(const f of (await readdir(join(root,'content/editions'))).filter(f=>f.endsWith('.json')).sort().reverse()){
     const ed=validateEdition(await readJSON(join(root,'content/editions',f)));
-    const expected=ed.mode==='account'?`${ed.slot}-account.json`:`${ed.slot}.json`;
+    const expected=ed.mode==='account'?`${ed.slot}-account${ed.batchId?`-${ed.batchId}`:''}.json`:`${ed.slot}.json`;
     if(f!==expected)throw new Error('Edition filename does not match slot.');
     for(const p of ed.posts){if(ids.has(p.id))throw new Error('Duplicate post ID.');ids.add(p.id);}
     editions.push(ed);

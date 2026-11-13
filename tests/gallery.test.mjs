@@ -91,21 +91,21 @@ test('account diary preserves history, uses varied personas and keeps demo posts
   await generate({root,now,env:{GALLERY_GENERATION_MODE:'template'}});
   const oldPath=join(root,'content/editions/2026-12-05-09.json');
   const old=await readFile(oldPath,'utf8');
-  const input={approvedForPublication:true,evidenceReviewed:true,sourceKind:'connected-conversations',posts:templatePosts('2026-12-05-09',3)};
+  const input={approvedForPublication:true,evidenceReviewed:true,sourceKind:'connected-conversations',posts:templatePosts('2026-12-05-09',10).map((p,i)=>({...p,author:`검수페르소나${i}`}))};
   input.posts[0].featured=true;
-  const result=await publishAccountDiary(input,{root,now});assert.equal(result.created,true);
+  const result=await publishAccountDiary(input,{root,now,random:()=>10});assert.equal(result.created,true);
   assert.equal(await readFile(oldPath,'utf8'),old);
   const before=await readFile(join(root,'content/editions/2026-12-05-09-account.json'),'utf8');
   assert.equal((await publishAccountDiary(input,{root,now})).created,false);
   assert.equal(await readFile(join(root,'content/editions/2026-12-05-09-account.json'),'utf8'),before);
   const payload=await build(root);
   const main=selectPosts(payload.posts,readRoute('#/'));
-  assert.equal(main.length,3);assert.ok(main.every(p=>p.origin==='account'));
-  assert.equal(new Set(main.map(p=>p.author)).size,3);
+  assert.equal(main.length,10);assert.ok(main.every(p=>p.origin==='account'));
+  assert.equal(new Set(main.map(p=>p.author)).size,10);
   assert.equal(selectPosts(payload.posts,readRoute('#/?tab=archive')).length,3);
   assert.equal(selectPosts(payload.posts,readRoute('#/?tab=hot')).length,1);
   assert.throws(()=>prepareAccountEdition({...input,evidenceReviewed:false},{now}));
-  const sameAuthor=structuredClone(input);sameAuthor.posts[1].author=sameAuthor.posts[0].author;
+  const sameAuthor=structuredClone(input);sameAuthor.posts.forEach(p=>p.author='한명뿐인봇');
   assert.throws(()=>prepareAccountEdition(sameAuthor,{now}));
   const unsafe=structuredClone(input);unsafe.posts[0].body[0]='leak person@example.com';
   assert.throws(()=>prepareAccountEdition(unsafe,{now}));
@@ -117,4 +117,37 @@ test('missing or expired API diary context never falls back to generic fiction',
     await assert.rejects(()=>generate({root,now:new Date('2026-12-05T00:01:00Z'),env:{GALLERY_GENERATION_MODE:'openai',OPENAI_API_KEY:'test',GALLERY_CONTEXT_JSON:context},fetcher:()=>{calls++;throw new Error('Must not call');}}));
   }
   assert.equal(calls,0);assert.equal((await readdir(join(root,'content/editions'))).length,0);
+});
+
+
+test('each scheduled shift draws 10–15 inclusive once, and retries reuse that count',async t=>{
+  const {drawAccountPostCount,planAccountEdition,publishAccountDiary}=await import('../scripts/account-diary.mjs');
+  assert.equal(drawAccountPostCount((min,max)=>{assert.equal(min,10);assert.equal(max,16);return 10;}),10);
+  assert.equal(drawAccountPostCount(()=>15),15);
+  assert.throws(()=>drawAccountPostCount(()=>16));
+  const root=await fixture(t);const now=new Date('2026-12-05T00:05:00Z');let draws=0;
+  const first=await planAccountEdition({root,now,random:()=>{draws++;return 12;}});
+  const retry=await planAccountEdition({root,now,random:()=>{throw new Error('Must not redraw');}});
+  assert.equal(first.count,12);assert.equal(retry.count,12);assert.equal(draws,1);
+  const draft={approvedForPublication:true,evidenceReviewed:true,sourceKind:'connected-conversations',posts:templatePosts('2026-12-05-09',12).map((p,i)=>({...p,author:`역할${i}`}))};
+  await assert.rejects(()=>publishAccountDiary({...draft,posts:draft.posts.slice(0,11)},{root,now}));
+  assert.equal((await readdir(join(root,'content/editions'))).length,0);
+  await publishAccountDiary(draft,{root,now});
+  assert.equal((await planAccountEdition({root,now})).published,true);
+  const evening=await planAccountEdition({root,now:new Date('2026-12-05T10:05:00Z'),random:()=>15});
+  assert.equal(evening.count,15);
+});
+
+test('an explicit 30-post bonus keeps the existing scheduled shift and its URLs intact',async t=>{
+  const {publishAccountDiary}=await import('../scripts/account-diary.mjs');
+  const root=await fixture(t);const now=new Date('2026-12-05T00:05:00Z');
+  const draft={approvedForPublication:true,evidenceReviewed:true,sourceKind:'connected-conversations',posts:templatePosts('2026-12-05-09',10).map((p,i)=>({...p,title:`서로 다른 회고 글 제목 ${i}`,author:`역할${i}`}))};
+  await publishAccountDiary(draft,{root,now,random:()=>10});
+  const before=await readFile(join(root,'content/editions/2026-12-05-09-account.json'),'utf8');
+  const bonus={...draft,posts:Array.from({length:30},(_,i)=>({...draft.posts[i%10],title:`추가 회고의 다른 제목 ${i}`}))};
+  await publishAccountDiary(bonus,{root,now,batchId:'bonus-extra30'});
+  const output=await build(root);assert.equal(output.posts.length,40);assert.equal(new Set(output.posts.map(p=>p.id)).size,40);
+  assert.equal(await readFile(join(root,'content/editions/2026-12-05-09-account.json'),'utf8'),before);
+  assert.ok(!(await readdir(join(root,'dist'))).includes('private'));
+  assert.equal((await publishAccountDiary(bonus,{root,now,batchId:'bonus-extra30'})).created,false);
 });

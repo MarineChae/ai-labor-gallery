@@ -22,7 +22,7 @@ export async function generate({root=fileURLToPath(ROOT),env=process.env,now=new
   const config=await readJSON(join(root,'config/site.json'));
   const slot=env.GALLERY_SLOT||slotFor(now);const scheduledAt=slotTime(slot);
   if(Date.parse(scheduledAt)>now.getTime())throw new Error('Cannot publish a future shift.');
-  if(!Number.isFinite(config.postsPerEdition)||config.postsPerEdition!==3)throw new Error('This generator supports exactly three posts per shift.');
+  if(config.legacyPostsPerEdition!==3)throw new Error('The optional legacy API/demo generator supports three posts per request; account shifts use their own 10–15 plan.');
   const path=join(root,'content/editions',`${slot}.json`);
   try{await access(path);console.log(`Shift ${slot} already exists; no request or write performed.`);return {created:false,slot};}catch(error){if(error.code!=='ENOENT')throw error;}
   const files=(await readdir(join(root,'content/editions'))).filter(f=>f.endsWith('.json'));

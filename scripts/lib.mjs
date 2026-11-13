@@ -51,6 +51,9 @@ export function validateGenerated(value,count=3,blockedTerms=[]){
 export function validateEdition(edition){
   slotTime(edition.slot);
   if(!Array.isArray(edition.posts)||!edition.posts.length||edition.posts.length>30)throw new Error('Invalid edition.');
+  if(edition.batchId!==undefined&&!/^bonus-[a-z0-9-]{1,30}$/.test(edition.batchId))throw new Error('Invalid bonus batch ID.');
+  if(edition.targetPostCount!==undefined&&edition.targetPostCount!==edition.posts.length)throw new Error('Edition size does not match its selected count.');
+  if(edition.publicationKind==='scheduled'&&(edition.posts.length<10||edition.posts.length>15))throw new Error('Scheduled shifts require 10–15 posts.');
   validateGenerated({posts:edition.posts},edition.posts.length);
   for(const p of edition.posts){
     if(!/^[a-zA-Z0-9_-]{1,100}$/.test(p.id)||!Number.isFinite(Date.parse(p.createdAt))||!['seed','template','openai','account'].includes(p.origin))throw new Error('Invalid stored post.');
